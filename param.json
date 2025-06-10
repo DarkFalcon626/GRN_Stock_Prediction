@@ -6,15 +6,14 @@
 		"Seq_length": 60,
 		"forecast_steps": 7,
 		"batch_size": 16,
-		"split_ratio": 0.80
+		"train_percent": 0.80,
+		"val_percent": 0.10
 	},
 	
 	"Model":{
-		"encoder_input_dim": 5,
 		"decoder_input_dim": 1,
 		"gcn_hidden_dim": 12,
-		"encoder_gru_hidden_dim": 24,
-		"decoder_gru_hidden_dim": 24
+		"gru_hidden_dim": 24
 	},
 	
 	"Train":{		
