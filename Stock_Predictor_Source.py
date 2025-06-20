@@ -2,7 +2,7 @@
 """
 Filename: Stock-predictor-source.py
 Author: Andrew Francey
-Date: 2025-05-27
+Date: 2025-06-20
 Description: 
     This script contains the functions and network classes for a Graph Recurrent Network (GRN) based
     approach to predicting stock market prices. The module includes:
@@ -97,13 +97,13 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
         ticker_obj = yf.Ticker(ticker)
         info = ticker_obj.info
         
-        df['EPS'] = info.get('trailingEps', np.nan)
+#        df['EPS'] = info.get('trailingEps', np.nan)
         df['PE_ratio'] = info.get('trailingPE', np.nan)
-        df['Debt_to_Equity'] = info.get('debtToEquity', np.nan)
-        df['Revenue'] = info.get('totalRevenue', np.nan)
+#        df['Debt_to_Equity'] = info.get('debtToEquity', np.nan)
+#        df['Revenue'] = info.get('totalRevenue', np.nan)
    
-        df[['EPS', 'PE_ratio', 'Debt_to_Equity', 'Revenue']] = \
-            df[['EPS', 'PE_ratio', 'Debt_to_Equity', 'Revenue']].ffill()
+        df[['PE_ratio']] = \
+            df[['PE_ratio']].ffill()
         
         # Get the marco economic indicators from FED API
         if fred:
@@ -127,7 +127,6 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
             ]
         
         df.columns = pd.MultiIndex.from_tuples(new_columns, names = df.columns.names)
-        print(df.columns)
         
         nan = df.isna().sum()
         n_nan = df.isna().sum().sum()
@@ -139,8 +138,7 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
         features_to_use = [
             'Open', 'High', 'Low', 'Close', 'Volume',
             'SMA_20', 'SMA_50', 'EMA_20', 'RSI', 'MACD', 'MACD_signal',
-            'BB_upper', 'BB_middle', 'BB_lower', 'Volume_change', 'Price_change',
-            'EPS', 'PE_ratio', 'Debt_to_Equity', 'Revenue',
+            'BB_upper', 'BB_middle', 'BB_lower', 'Volume_change', 'Price_change', 'PE_ratio',
             'Interest_Rates', 'Commodity_Prices', 'Colatility_Index','Economic_Index'
         ]
         
@@ -152,23 +150,25 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
         
         df_list.append(df[features_to_use])
         target_list.append(df[['Close']])
-
-    feature_dfs = []
-    for ticker, df in zip(tickers, df_list):
-        temp = df.copy()
-        print(temp.columns)
-        temp.columns = pd.MultiIndex.from_product([[ticker], temp.columns])
-        feature_dfs.append(temp)
     
-    df_features = pd.concat(feature_dfs, axis=1, join="inner")
-    df_target = pd.concat([df[['Close']].rename(columns={'Close': ticker}) for ticker, df in zip(tickers, df_list)],
-                          axis=1, join='inner')
+    # Merge the data on common dates and create a MultiIndex
+    df_features = pd.concat([df[features_to_use] for df in df_list], axis=1, join='inner')
+    df_features.columns = pd.MultiIndex.from_product([tickers, features_to_use])
     
+    df_target = pd.concat([df[['Close']] for df in target_list], axis=1, join='inner')
+    df_target.columns = tickers
+    
+    # Drop all columns that have a null value.
     df_features.dropna(inplace=True)
     df_target.dropna(inplace=True)
     
-    features_list = [df_features[ticker].values for ticker in tickers]
-    features_array = np.stack(features_list, axis=1)
+    # Build features_array: shape (T, num_stocks, num_features)
+    
+    features = []
+    for ticker in tickers:
+        features.append(df_features[ticker].values)
+    
+    features_array = np.stack(features, axis=1)
     target_array = df_target.values
     
     return features_array, target_array, df_features.index, scalers, features_to_use
