@@ -91,7 +91,7 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
         # Price Change (% change)
         df['Price_change'] = df['Close'].pct_change()
         
-        df = df.fillna(method='bfill')
+        df = df.bfill()
         
         # Get fundamental data from yfinance
         ticker_obj = yf.Ticker(ticker)

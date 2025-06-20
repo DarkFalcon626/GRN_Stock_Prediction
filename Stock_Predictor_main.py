@@ -10,7 +10,7 @@ Description: This script implements a Graph Recurrent Network (GRN) that
             graph for the stocks, and builds a model that combines a Graph 
             Convolutional Network (GCN) with a GRU to capture both spatial 
             (graph) and temporal (sequential) dependencies.
-Version: 1.1.0
+Version: 1.1.1
 License: Proprietary Licesnses
 Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch
 Usage: To run the script, simply execute:
@@ -183,7 +183,10 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
     
     # Define the loss function using the Mean Squared Error (MSE) and the Adam optimizer.
     criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=train_param['lr'])
+    optimizer = optim.Adam(model.parameters(), lr=train_param['lr'], weight_decay=1e-7)
+    
+    # Using a learning rate scheduling
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=train_param['factor'], patience=train_param['patience'])
     
     # Initialize lists to store the average training and test loss value per epoch.
     train_loss, cross_loss = [], []
@@ -252,7 +255,12 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
         
         cross_loss.append(avg_val_loss)
         
-        print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
+        scheduler.step(val_loss)
+        
+        # Print out the learning rate for monitoring.
+        current_lr = optimizer.param_groups[0]['lr']
+        
+        print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}, lr: {current_lr}")
     
     for x_test, y_test in val_loader:
         x_test = x_test.to(device)
@@ -291,7 +299,8 @@ if __name__ == '__main__':
     
     start_time = time.time()
     
-    device = torch.device("cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"\t Using device: {device}")
     
     parser = argparse.ArgumentParser(description="Stock prediction")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
