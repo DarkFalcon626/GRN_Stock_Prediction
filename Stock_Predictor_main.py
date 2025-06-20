@@ -2,7 +2,7 @@
 """
 Filename: Stock-Predictor.py
 Author: Andrew Francey
-Date: 2025-05-20
+Date: 2025-06-20
 Description: This script implements a Graph Recurrent Network (GRN) that 
             forecasts the next month's closing prices for a selected group of 
             tech stocks. It uses historical stock data obtained via yfinance,
@@ -10,7 +10,7 @@ Description: This script implements a Graph Recurrent Network (GRN) that
             graph for the stocks, and builds a model that combines a Graph 
             Convolutional Network (GCN) with a GRU to capture both spatial 
             (graph) and temporal (sequential) dependencies.
-Version: 1.0.0
+Version: 1.1.0
 License: Proprietary Licesnses
 Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch
 Usage: To run the script, simply execute:
@@ -76,7 +76,7 @@ def prep(param):
     end_date = (datetime.now()-timedelta(days=7)).strftime('%Y-%m-%d')
     
     # Download the stock data.
-    features_array, target_array, _, scalers = src.download_and_preprocess_data(data_param['tickers'], data_param['features'], data_param['Start_date'], end_date)
+    features_array, target_array, _, scalers, features = src.download_and_preprocess_data(data_param, end_date)
     print("Features shape: ", features_array.shape)
     print("Target shape: ", target_array.shape)
     
@@ -84,11 +84,15 @@ def prep(param):
     X, y = src.create_sequences(features_array, target_array, data_param['Seq_length'], data_param['forecast_steps'])
     print("X shape: ", X.shape, "y shape: ", y.shape)
     
-    # Split into training and test sets.
+    # Split into training, validation and test sets.
     num_sample = X.shape[0]
-    split_idx = int(num_sample * data_param['split_ratio'])
-    X_train, y_train = X[:split_idx], y[:split_idx]
-    X_test, y_test = X[split_idx:], y[split_idx:]
+    train_split_idx = int(num_sample * data_param['train_percent'])
+    val_split_idx = train_split_idx + int(num_sample * data_param['val_percent'])
+    
+    
+    X_train, y_train = X[:train_split_idx], y[:train_split_idx]
+    X_val, y_val = X[train_split_idx:val_split_idx], y[train_split_idx:val_split_idx]
+    X_test, y_test = X[val_split_idx:], y[val_split_idx:]
     
     num_cores = cpu_count() # Determine number of cores in cpu for dataloader.
     
@@ -96,23 +100,36 @@ def prep(param):
     train_dataset = src.StockDataset(X_train, y_train)
     train_loader = DataLoader(train_dataset, batch_size=data_param['batch_size'], shuffle=True, num_workers=num_cores)
     
-    val_dataset = src.StockDataset(X_test, y_test)
-    val_loader = DataLoader(val_dataset, batch_size=data_param['batch_size'], shuffle=True, num_workers=num_cores)
+    # Get the batch size of the valadation set.
+    val_size = len(X_val)
     
+    val_dataset = src.StockDataset(X_val, y_val)
+    val_loader = DataLoader(val_dataset, batch_size=val_size, shuffle=False, num_workers=num_cores)
+    
+    # Get the test size of the test set.
+    test_size = len(X_test)
+    
+    test_dataset = src.StockDataset(X_test, y_test)
+    test_loader = DataLoader(test_dataset, batch_size=test_size, shuffle=False, num_workers=num_cores)
+
     # Create the graph between the nodes (i.e. stocks)
     num_nodes = len(data_param['tickers'])
     edge_index = src.create_complete_graph(num_nodes).to(device)
     
+    encoder_input_dim = len(features)
+    
     # Create the model.
-    model = src.GRNSeq2Seq(model_param['encoder_input_dim'], model_param['decoder_input_dim'], model_param['gcn_hidden_dim'],
-                       model_param['encoder_gru_hidden_dim'], model_param['decoder_gru_hidden_dim'], num_nodes, data_param['forecast_steps'])
+    model = src.GRNSeq2Seq(encoder_input_dim, model_param['decoder_input_dim'], model_param['gcn_hidden_dim'],
+                       model_param['gru_hidden_dim'], num_nodes, data_param['forecast_steps'])
     
     model = model.to(device) # Send model to the device 
     
-    return train_loader, val_loader, model, edge_index, scalers
+    return train_loader, val_loader, test_loader, model, edge_index, scalers
 
 
-def train_model(model, dataloader, val_loader, edge_index, device, train_param):
+
+
+def train_model(model, dataloader, val_loader, test_loader, edge_index, device, train_param):
     '''
     Trains the GRN model and evaluates its performance at the end of each epoch.
 
@@ -236,6 +253,19 @@ def train_model(model, dataloader, val_loader, edge_index, device, train_param):
         cross_loss.append(avg_val_loss)
         
         print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}")
+    
+    for x_test, y_test in val_loader:
+        x_test = x_test.to(device)
+        y_test = y_test.to(device)
+        
+        # Create initial decoder input for test data.
+        decoder_input_test = x_test[:,-1,:,3].unsqueeze(-1)
+        
+        output_test = model(x_test, decoder_input_test, edge_index, targets=y_test, teacher_forcing_ratio=0.0)
+        
+        test_loss = criterion(output_test, y_test)
+        
+        print(f"Final test loss is {test_loss:.4f}.")
         
     return train_loss, cross_loss
 
@@ -255,17 +285,18 @@ def plot_loss(train_loss, cross_loss):
     plt.grid()
     plt.legend()
     plt.show()
-    
+
         
 if __name__ == '__main__':
     
     start_time = time.time()
     
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     
     parser = argparse.ArgumentParser(description="Stock prediction")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
     parser.add_argument('--model', default='Stock-prediction.pkl', help='Name of the file the model will be saved as.')
+    parser.add_argument('--fine-tune', default='True',type = bool, help="Bool for if the model's hyperparameters are being fine-tuned")
     
     args = parser.parse_args()
     
@@ -273,14 +304,18 @@ if __name__ == '__main__':
         param = json.load(paramfile)
     paramfile.close()
     
-    train_loader, val_loader, model, edge_index, scalers = prep(param)
+    train_loader, val_loader, test_loader, model, edge_index, scalers = prep(param)
     print('Data and model loaded, Begining training....')
     
     train_param = param['Train']
-    
-    train_loss, cross_loss = train_model(model, train_loader, val_loader, edge_index, device, train_param)
+
+    train_loss, cross_loss = train_model(model, train_loader, val_loader, test_loader, edge_index, device, train_param)
     
     plot_loss(train_loss, cross_loss)
+        
+    with open(args.model, 'wb') as f:
+        pickle.dump(model, f)
+    f.close()
     
     train_time = time.time()-start_time
     if (train_time//3600) > 0:
@@ -294,7 +329,5 @@ if __name__ == '__main__':
     else:
         print('The model trained in {:.0f} seconds'.format(train_time))
     
-    with open(args.model, 'wb') as f:
-        pickle.dump(model, f)
-    f.close()
+    
         
