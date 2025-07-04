@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Filename: Stock-Predictor.py
+Filename: Stock-Predictor-trainer.py
 Author: Andrew Francey
 Date: 2025-06-20
 Description: This script implements a Graph Recurrent Network (GRN) that 
@@ -34,7 +34,6 @@ Usage: To run the script, simply execute:
 
 import torch
 import time
-import pickle
 from datetime import datetime, timedelta
 import json, argparse
 import Stock_Predictor_Source as src
@@ -42,10 +41,39 @@ import matplotlib.pyplot as plt
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from multiprocessing import cpu_count
 
 
+class early_stopping:
+    '''
+    Stops training if validation loss doesn't improve after a given patience.'
+    '''
+    
+    def __init__(self, patience=3, min_delta=0.5, save_path='checkpoint.pt'):
+        
+        self.patience = patience
+        self.min_delta = min_delta
+        self.save_path = save_path
+        self.best_loss = np.Inf
+        self.counter = 0 
+        self.early_stop = False
+        
+    def __call__(self, val_loss, model):
+        
+        if val_loss < self.best_loss - self.min_delta:
+            self.best_loss = val_loss
+            self.counter = 0
+            
+            torch.save(model.state_dict(), self.save_path)
+        
+        else:
+            self.counter += 1
+            print(f"Early Stopping counter: {self.counter} out of {self.patience}")
+            
+            if self.counter >= self.patience:
+                self.early_stop = True
+    
 def prep(param):
     '''
     Function to set up the training and test datasets as well as the GRN encoder
@@ -73,7 +101,7 @@ def prep(param):
     model_param = param['Model']
     
     # Use the current date minus a week as the end date.
-    end_date = (datetime.now()-timedelta(days=7)).strftime('%Y-%m-%d')
+    end_date = (datetime.now()).strftime('%Y-%m-%d')
     
     # Download the stock data.
     features_array, target_array, _, scalers, features = src.download_and_preprocess_data(data_param, end_date)
@@ -125,8 +153,6 @@ def prep(param):
     model = model.to(device) # Send model to the device 
     
     return train_loader, val_loader, test_loader, model, edge_index, scalers
-
-
 
 
 def train_model(model, dataloader, val_loader, test_loader, edge_index, device, train_param):
@@ -190,6 +216,10 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
     
     # Initialize lists to store the average training and test loss value per epoch.
     train_loss, cross_loss = [], []
+    
+    # Create early stopping object
+    early_stopper = early_stopping(patience=train_param['stopping_patience'], min_delta=train_param['min_delta'],
+                                   save_path='best_model.pt')
     
     # Loop through each epoch.
     for epoch in range(num_epochs):
@@ -261,8 +291,14 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
         current_lr = optimizer.param_groups[0]['lr']
         
         print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}, lr: {current_lr}")
+        
+        early_stopper(val_loss, model)
+        if early_stopper.early_stop:
+            print("Early stopping triggered. Restoring best model.")
+            model.load_state_dict(torch.load('best_model.pt'))
+            break
     
-    for x_test, y_test in val_loader:
+    for x_test, y_test in test_loader:
         x_test = x_test.to(device)
         y_test = y_test.to(device)
         
@@ -304,7 +340,7 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description="Stock prediction")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
-    parser.add_argument('--model', default='Stock-prediction.pkl', help='Name of the file the model will be saved as.')
+    parser.add_argument('--model', default='Stock-prediction.pth', help='Name of the file the model will be saved as.')
     parser.add_argument('--fine-tune', default='True',type = bool, help="Bool for if the model's hyperparameters are being fine-tuned")
     
     args = parser.parse_args()
@@ -321,10 +357,17 @@ if __name__ == '__main__':
     train_loss, cross_loss = train_model(model, train_loader, val_loader, test_loader, edge_index, device, train_param)
     
     plot_loss(train_loss, cross_loss)
-        
-    with open(args.model, 'wb') as f:
-        pickle.dump(model, f)
-    f.close()
+    
+    # Save both the model and the edge_index together in a dictionary
+    save_dict = {
+        'model_state_dict': model.state_dict(),
+        'edge_index': edge_index
+        }
+    
+    # Save the model using torch's built in method to the pth file.
+    torch.save(save_dict, 'Stock-prediction.pth')
+    
+    print(f"Model saved as {args.model}.")
     
     train_time = time.time()-start_time
     if (train_time//3600) > 0:

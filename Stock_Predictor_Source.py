@@ -12,7 +12,7 @@ Description:
           features from stock data with a Gated Recurrent Unit (GRU) to capture temporal dynamics.
     This modular implementation is designed for forecasting future closing prices of tech stocks and is 
     intended to serve as both an educational tool and a prototype for more advanced trading models.
-Version: 1.1.0
+Version: 1.1.1
 License: Proprietary Licesneses
 Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch
 Usage: 
@@ -26,19 +26,21 @@ import talib as ta
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
+from datetime import datetime, timedelta
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv
 from torch.utils.data import Dataset
 from fredapi import Fred
 import random
+import os
 
 
 # FRED Api key
 fred_api_key = '46cd749d3683d90133cfd5e713355873'
 
 
-def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key):
+def download_and_preprocess_data(data_param, end_date, start_date=None, fred_api_key=fred_api_key):
     """
     Downloads historical data for the given tickers and preprocesses it.
     For each stock, we extract the following features: Open, High, Low, Close, and Volume.
@@ -53,7 +55,8 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
     """
     
     tickers = data_param['tickers']
-    start_date = data_param['Start_date']
+    if start_date == None:
+        start_date = data_param['Start_date']
     
     df_list = [] # for features
     target_list = []
@@ -63,7 +66,7 @@ def download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key
     fred = Fred(api_key=fred_api_key) if fred_api_key else None
     
     for ticker in tickers:
-        data = yf.download(ticker, start=start_date, end=end_date)
+        data = yf.download(ticker, start=start_date, end=end_date, auto_adjust=False)
         if data.empty:
             continue
         df = data.copy()
@@ -400,19 +403,20 @@ def create_complete_graph(num_nodes):
     edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
     return edge_index
 
-def plot_stocks(param, end_date, model, edge_index, scalers):
+def plot_stocks(param, end_date, model, edge_index, scalers, device, fred_api_key=fred_api_key):
     
     # Load in the needed parameters
-    tickers = param['tickers']
-    Seq_length = param['seq_length']
-    feature_list = param['features']
+    data_param = param['Data']
+    
+    tickers = data_param['tickers']
+    Seq_length = data_param['Seq_length']
     
     # Backtrack the start date of the sequence from the end date.
     start_date = datetime .strptime(end_date, '%Y-%m-%d') - timedelta(days=Seq_length)
     start_date = start_date.strftime('%Y-%m-%d')
     
     # Load in the features of the stock data.
-    x_input, _, dates, scalers = src.download_and_preprocess_data(tickers, feature_list, start_date, end_date)
+    x_input, _, dates, scalers, _ = download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key)
     
     # Set the model to eval mode and don't compute the gradients.
     model.eval()
@@ -426,7 +430,7 @@ def plot_stocks(param, end_date, model, edge_index, scalers):
         
         # Pass the sequence through the model.
         predictions_scaled = model(x_input, decoder_input, edge_index, teacher_forcing_ratio=0.0)
-        
+        print('predictions_scaled shape: ', predictions_scaled.shape())
         predictions_scaled = predictions_scaled.cpu().numpy() # Convert to numpy array and move to cpu
         
         predictions_scaled = predictions_scaled.flatten() # Remove the extra dimensions.
@@ -454,6 +458,7 @@ def plot_stocks(param, end_date, model, edge_index, scalers):
         plt.ylabel("Closing price")
         plt.legend()
     
+    plt.show()
     
     
     
