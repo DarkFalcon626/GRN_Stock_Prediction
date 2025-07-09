@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Filename: Stock-predictor-source.py
+Filename: Stock_predictor_source.py
 Author: Andrew Francey
-Date: 2025-06-20
+Date: 2025-07-04
 Description: 
     This script contains the functions and network classes for a Graph Recurrent Network (GRN) based
     approach to predicting stock market prices. The module includes:
@@ -12,9 +12,10 @@ Description:
           features from stock data with a Gated Recurrent Unit (GRU) to capture temporal dynamics.
     This modular implementation is designed for forecasting future closing prices of tech stocks and is 
     intended to serve as both an educational tool and a prototype for more advanced trading models.
-Version: 1.1.1
+Version: 1.1.2
 License: Proprietary Licesneses
-Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch
+Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch, Fred, datetime,
+                talib, torch_geometric.nn
 Usage: 
     To use this module import the necessary functions as 
         from Stock-predictor-source import --
@@ -30,10 +31,10 @@ from datetime import datetime, timedelta
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from fredapi import Fred
 import random
-import os
+
 
 
 # FRED Api key
@@ -130,6 +131,9 @@ def download_and_preprocess_data(data_param, end_date, start_date=None, fred_api
             ]
         
         df.columns = pd.MultiIndex.from_tuples(new_columns, names = df.columns.names)
+        
+        df = df.bfill()
+        df = df.ffill()
         
         nan = df.isna().sum()
         n_nan = df.isna().sum().sum()
@@ -402,64 +406,49 @@ def create_complete_graph(num_nodes):
                 edge_list.append([i,j])
     edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous()
     return edge_index
+    
 
-def plot_stocks(param, end_date, model, edge_index, scalers, device, fred_api_key=fred_api_key):
-    
-    # Load in the needed parameters
-    data_param = param['Data']
-    
-    tickers = data_param['tickers']
-    Seq_length = data_param['Seq_length']
-    
-    # Backtrack the start date of the sequence from the end date.
-    start_date = datetime .strptime(end_date, '%Y-%m-%d') - timedelta(days=Seq_length)
-    start_date = start_date.strftime('%Y-%m-%d')
-    
-    # Load in the features of the stock data.
-    x_input, _, dates, scalers, _ = download_and_preprocess_data(data_param, end_date, fred_api_key=fred_api_key)
-    
-    # Set the model to eval mode and don't compute the gradients.
-    model.eval()
-    with torch.no_grad():
-        if not isinstance(x_input, torch.Tensor): # Check if the input is a tensor and convert it one if not.
-            x_input = torch.tensor(x_input, dtype=torch.float32)
-        x_input = x_input.to(device)
+def plot_stocks_eval(param, model, features, targets, dates, scalers, edge_index, device):
+
+        seq_input, targets = create_sequences(features, targets, param['Seq_length'], param['forecast_steps'])
         
-        # Get the decoder_input.
-        decoder_input = x_input[:, :-1, :].unsqueeze(-1)
+        x_input, targets = torch.tensor(np.array([seq_input[-1]]), dtype=torch.float32).to(device), targets[-1]
+                
+        model.eval()
+        with torch.no_grad():
+            decoder_input = x_input[:, -1, :, 3].unsqueeze(-1)
+            predictions_scaled = model(x_input, decoder_input, edge_index, teacher_forcing_ratio=0.0)
+
+            predictions_scaled = predictions_scaled.cpu().numpy()
         
-        # Pass the sequence through the model.
-        predictions_scaled = model(x_input, decoder_input, edge_index, teacher_forcing_ratio=0.0)
-        print('predictions_scaled shape: ', predictions_scaled.shape())
-        predictions_scaled = predictions_scaled.cpu().numpy() # Convert to numpy array and move to cpu
+        predictions_scaled = predictions_scaled.squeeze()    
+        predictions_scaled = np.transpose(predictions_scaled, (1,0))
+
+        targets = np.transpose(targets, (1, 0))
         
-        predictions_scaled = predictions_scaled.flatten() # Remove the extra dimensions.
-    
-    # Undo the normalization.
-    predictions = scalers.inverse_transform(predictions_scaled.reshape(-1,1))
-    
-    # switch the temperal axis (axis 0) with the stock axis (axis 1)
-    predictions = np.transpose(predictions, (1, 0, 2))
-    
-    ## -- Get the actual stock data --
-    start_date = end_date
-    end_date = datetime.strptime(start_date, '%Y-%m-%d') + timedelta(days=7) 
-    
-    df_list = []
-    for ticker in tickers:
-        data = yf.download(ticker)
-    
-    for ticker, i in enumerate(tickers):
-        plt.figure()
-        plt.plot(dates, predictions[i][:][3], label='Prediction')
-        plt.plot()
-        plt.title(f"{ticker} Stock price.")
-        plt.xlabel("Date")
-        plt.ylabel("Closing price")
-        plt.legend()
-    
-    plt.show()
-    
-    
+        dates = dates[-1*param["forecast_steps"]:].to_numpy()
+        dates = dates.astype('datetime64[D]')
+        
+        for i, ticker in enumerate(param['tickers']):
+
+            close_scaler = scalers[ticker]['close']
+            
+            predictions_ticker = close_scaler.inverse_transform(predictions_scaled[i].reshape(-1,1))
+            targets_ticker = close_scaler.inverse_transform(targets[i].reshape(-1,1))
+            predictions_ticker = predictions_ticker.flatten()
+            targets_ticker = targets_ticker.flatten()
+
+            plt.figure()
+            plt.plot(dates, predictions_ticker, label='Predicted')
+            plt.plot(dates, targets_ticker, label='Actual value')
+            plt.title(f"{ticker} Stock price")
+            plt.xlabel('Date')
+            plt.ylabel("Closing price")
+            plt.xticks(rotation=45, ha='right')
+            plt.legend()
+            plt.grid()
+        
+            plt.show()
+        
     
     

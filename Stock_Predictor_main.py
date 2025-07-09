@@ -1,5 +1,15 @@
 # -*- coding: utf-8 -*-
-
+"""
+Filename: Stock_predictor_main.py
+Author: Andrew Francey
+Date: 2025-07-04
+Description:
+Version: 1.0.0
+License: Proprietary Licesneses
+Dependencies: torch, json, argparse, numpy, Stock_Predictor_Source, datetime.
+Usage: To run this script, simply execute:
+    python Stock_Predictor_main.py
+"""
 
 import torch
 import json, argparse
@@ -16,7 +26,8 @@ if __name__ == '__main__':
     
     parser = argparse.ArgumentParser(description="Stock predictor")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
-    parser.add_argument('--model', default='Stock-prediction.pkl', help='Name of the file the model that will be used')
+    parser.add_argument('--model', default='Stock-prediction.pth', help='Name of the file the model that will be used')
+    parser.add_argument('--ticker', default='all', help='Tickers of the stocks to plot')
     
     args = parser.parse_args()
     
@@ -27,12 +38,11 @@ if __name__ == '__main__':
     model_param = param['Model']
     data_param = param['Data']
     
-    end_date = (datetime.now() - timedelta(days=5)).strftime('%Y-%m-%d')
-    start_date = (datetime.now()-timedelta(days=5)-timedelta(days=data_param['Seq_length'])).strftime('%Y-%m-%d')
+    model_save_file = torch.load(args.model, map_location='cpu')
     
-    features_array, _, scalers, features = src.download_and_preprocess_data(data_param, end_date, start_date)
-    print(features_array.shape)
-    print(type(features_array))
+    end_date = end_date = (datetime.now()).strftime('%Y-%m-%d')
+    
+    features_array, target_array, dates, scalers, features = src.download_and_preprocess_data(data_param, end_date)
     
     num_nodes = len(data_param['tickers'])
     edge_index = src.create_complete_graph(num_nodes).to(device)
@@ -42,6 +52,14 @@ if __name__ == '__main__':
                            model_param['gcn_hidden_dim'], model_param['gru_hidden_dim'], 
                            num_nodes, data_param['forecast_steps'])
     
-    model = model.to(device)
+    model.load_state_dict(model_save_file['model_state_dict'])
+    
+    edge_index = model_save_file['edge_index']
+    
+    model, edge_index = model.to(device), edge_index.to(device)
+    
+    src.plot_stocks_eval(data_param, model, features_array, target_array, dates, scalers, edge_index, device)
+    
+    
     
     

@@ -2,7 +2,7 @@
 """
 Filename: Stock-Predictor-trainer.py
 Author: Andrew Francey
-Date: 2025-06-20
+Date: 2025-07-04
 Description: This script implements a Graph Recurrent Network (GRN) that 
             forecasts the next month's closing prices for a selected group of 
             tech stocks. It uses historical stock data obtained via yfinance,
@@ -10,11 +10,11 @@ Description: This script implements a Graph Recurrent Network (GRN) that
             graph for the stocks, and builds a model that combines a Graph 
             Convolutional Network (GCN) with a GRU to capture both spatial 
             (graph) and temporal (sequential) dependencies.
-Version: 1.1.1
+Version: 1.1.2
 License: Proprietary Licesnses
 Dependencies: yfinance, pandas, numpy, matplotlib, sklearn, torch
 Usage: To run the script, simply execute:
-        python Stock-Predictor.py
+        python Stock_Predictor_train.py
 
     The script will:
         - Download historical closing prices for a predefined list of tech stocks.
@@ -111,6 +111,11 @@ def prep(param):
     # Create sequences
     X, y = src.create_sequences(features_array, target_array, data_param['Seq_length'], data_param['forecast_steps'])
     print("X shape: ", X.shape, "y shape: ", y.shape)
+    
+    # Shuffle the sequences
+    permutation = np.random.permutation(len(X))
+    
+    X, y = X[permutation], y[permutation]
     
     # Split into training, validation and test sets.
     num_sample = X.shape[0]
@@ -212,7 +217,8 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
     optimizer = optim.Adam(model.parameters(), lr=train_param['lr'], weight_decay=1e-7)
     
     # Using a learning rate scheduling
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=train_param['factor'], patience=train_param['patience'])
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=train_param['factor'], 
+                                                     threshold=train_param['threshold'], patience=train_param['patience'])
     
     # Initialize lists to store the average training and test loss value per epoch.
     train_loss, cross_loss = [], []
@@ -240,6 +246,8 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
             decoder_input = x_batch[:, -1, :, 3].unsqueeze(-1)
             
             # Preform the forward pass throught the model with teacher forcing during training.
+#            print('x_batch shape: ', x_batch.shape)
+#            print('decoder_input: ', decoder_input.shape)
             output = model(x_batch, decoder_input, edge_index, targets=y_batch, teacher_forcing_ratio=teacher_forcing_ratio)
             
             # Compute the loss between the model's output and the actual target value.
@@ -270,7 +278,7 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
                 
                 # Create initial decoder input for validation data.
                 decoder_input_val = x_val[:,-1,:,3].unsqueeze(-1)
-                
+                print('x_input shape: ', x_val.shape, 'decoder_input_val: ', decoder_input_val.shape)
                 # Teacher forcing is disabled during evaluation (teacher_forcing_ratio=0.0).
                 output_val = model(x_val, decoder_input_val, edge_index, targets=y_val, teacher_forcing_ratio=0.0)
                 
@@ -290,7 +298,7 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
         # Print out the learning rate for monitoring.
         current_lr = optimizer.param_groups[0]['lr']
         
-        print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.4f}, Validation Loss: {avg_val_loss:.4f}, lr: {current_lr}")
+        print(f"Epoch {epoch+1}/{num_epochs} - Training Loss: {avg_train_loss:.5f}, Validation Loss: {avg_val_loss:.5f}, lr: {current_lr}")
         
         early_stopper(val_loss, model)
         if early_stopper.early_stop:
@@ -309,7 +317,7 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
         
         test_loss = criterion(output_test, y_test)
         
-        print(f"Final test loss is {test_loss:.4f}.")
+        print(f"Final test loss is {test_loss:.7f}.")
         
     return train_loss, cross_loss
 
@@ -336,7 +344,7 @@ if __name__ == '__main__':
     start_time = time.time()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"\t Using device: {device}")
+    print(f"\tUsing device: {device}")
     
     parser = argparse.ArgumentParser(description="Stock prediction")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
