@@ -11,8 +11,8 @@
 	
 	"Model":{
 		"decoder_input_dim": 1,
-		"gcn_hidden_dim": 50,
-		"gru_hidden_dim": 64
+		"gcn_hidden_dim": 60,
+		"gru_hidden_dim": 120
 	},
 	
 	"Train":{		
@@ -23,6 +23,6 @@
 		"threshold": 1e-3,
 		"patience": 3,
 		"stopping_patience": 4,
-		"min_delta": 0.005
+		"min_delta": 0.0005
 	}
 }

@@ -246,8 +246,7 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
             decoder_input = x_batch[:, -1, :, 3].unsqueeze(-1)
             
             # Preform the forward pass throught the model with teacher forcing during training.
-#            print('x_batch shape: ', x_batch.shape)
-#            print('decoder_input: ', decoder_input.shape)
+
             output = model(x_batch, decoder_input, edge_index, targets=y_batch, teacher_forcing_ratio=teacher_forcing_ratio)
             
             # Compute the loss between the model's output and the actual target value.
@@ -278,7 +277,7 @@ def train_model(model, dataloader, val_loader, test_loader, edge_index, device, 
                 
                 # Create initial decoder input for validation data.
                 decoder_input_val = x_val[:,-1,:,3].unsqueeze(-1)
-                print('x_input shape: ', x_val.shape, 'decoder_input_val: ', decoder_input_val.shape)
+
                 # Teacher forcing is disabled during evaluation (teacher_forcing_ratio=0.0).
                 output_val = model(x_val, decoder_input_val, edge_index, targets=y_val, teacher_forcing_ratio=0.0)
                 
@@ -341,11 +340,13 @@ def plot_loss(train_loss, cross_loss):
         
 if __name__ == '__main__':
     
-    start_time = time.time()
+    start_time = time.time() # Mark the time the model began training
     
+    # Determine if a GPU is availible for use.
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\tUsing device: {device}")
     
+    # Set up commandline arguments.
     parser = argparse.ArgumentParser(description="Stock prediction")
     parser.add_argument('--param', default='param.json', help='Json file for the hyperparameters.')
     parser.add_argument('--model', default='Stock-prediction.pth', help='Name of the file the model will be saved as.')
